@@ -804,168 +804,129 @@ module Extract = struct
 
 *)
 
-type 'a repr =
-    Rtuple : type_expr list repr
-  | Rvariant : row_desc repr
-  | Rarrow : (string * type_expr * type_expr) repr
-  | Rpackage : (Path.t * Longident.t list * type_expr list) repr
-  | Rpoly : (type_expr list * type_expr) repr
-  | Robject : type_expr repr
+  type 'a repr =
+      Rtuple : type_expr list repr
+    | Rconstr : (type_expr list * Path.t) repr
+    | Rvariant : row_desc repr
+    | Rarrow : (string * type_expr * type_expr) repr
+    | Rpackage : (Path.t * Longident.t list * type_expr list) repr
+    | Rpoly : (type_expr list * type_expr) repr
+    | Robject : type_expr repr
 
-type 'a extractor = {
-  matches: type_expr * 'a repr -> bool;
-  extract: type_expr * 'a repr -> 'a;
-}
+  type 'a extractor = type_expr * 'a repr -> ('a, error) result
 
-type error +=
-  Expected_type_mismatch : _ repr * type_expr -> error
+  type error +=
+      Expected_type_mismatch : _ repr * type_expr -> error
 
-let print_repr (type a) fmt : a repr -> unit = function
-    Rtuple -> Format.fprintf fmt "tuple type"
-  | Rvariant -> Format.fprintf fmt "variant type"
-  | Rarrow -> Format.fprintf fmt "functional type"
-  | Rpackage -> Format.fprintf fmt "package type"
-  | Rpoly -> Format.fprintf fmt "polymorphic type"
-  | Robject -> Format.fprintf fmt "object type"
+  let print_repr (type a) fmt : a repr -> unit = function
+      Rtuple -> Format.fprintf fmt "tuple type"
+    | Rconstr -> Format.fprintf fmt "constructor type"
+    | Rvariant -> Format.fprintf fmt "variant type"
+    | Rarrow -> Format.fprintf fmt "functional type"
+    | Rpackage -> Format.fprintf fmt "package type"
+    | Rpoly -> Format.fprintf fmt "polymorphic type"
+    | Robject -> Format.fprintf fmt "object type"
 
-let extract_repr_newty :
-  type a. context -> TySet.t -> type_expr -> a repr -> (a, error) result =
-  fun ctx ambty ty r ->
-    let module TyTbl = Hashtbl.Make (TypeOps) in
-    let visited = TyTbl.create 17 in
-    let res: (type_expr * a repr) option =
-      TySet.fold (fun ty acc ->
-        let ty = Btype.repr ty in
-        if TyTbl.mem visited ty then acc
-        else begin
-          TyTbl.add visited ty ();
-          match ty with
-            { desc = Tconstr (p, [], _); _ } when is_newtype p -> acc
-          | { desc =
-                (
-                  Tarrow (_, _, _, _)
-                | Tpackage (_, _, _)
-                | Ttuple _
-                | Tvariant _
-                | Tpoly (_, _)
-                | Tobject (_ ,_)
-                ); _ } ->
-            begin
-              match acc with
-                None -> Some (ty, r)
-              | Some (ty', r) -> Some ((* less_gen ctx ty *) ty', r)
-            end
-          | { desc = Tconstr _; _} ->
-            begin match safe_expand_abbrev_max ctx ty, acc with
-                { desc = Tconstr _; _ } as ty, None -> Some (ty, r)
-              | { desc = Tconstr _; _ } as _ty, Some (ty', r) ->
-                Some ((* less_gen ctx ty  *)ty', r)
-              | _, _ -> acc
-            end
-          | _ -> acc
-        end)
-        ambty None in
-    match res, r with
-      Some ({ desc = Ttuple tys; _ }, Rtuple), Rtuple -> Ok tys
-    | Some ({ desc = Tvariant rd; _ }, Rvariant), Rvariant -> Ok rd
-    | Some ({ desc = Tarrow (l, ty, ty', _); _ }, Rarrow), Rarrow ->
-      Ok (l, ty, ty')
-    | Some ({ desc = Tpoly (ty, params); _ }, Rpoly), Rpoly ->
-      Ok (params, ty)
-    | Some ({ desc = Tpackage (l, lids, tys); _ }, Rpackage), Rpackage ->
-      Ok (l, lids, tys)
-    | Some ({ desc = Tobject (f, _); _ }, Robject), Robject -> Ok f
-    | _ -> Error (Expected_type_mismatch (r, ty))
+  let is_rconstr: type a. a repr -> bool = function Rconstr -> true | _ -> false
 
-(* Si newtype : remove newtype pour éviter le cycle, on continue
-   Sinon, si constr : expanse
-   Sinon si tuple : retourne le tuple  (choisi le less_gen??)
-   Sinon on continue*)
+  let extract_repr_newty :
+    type a. context -> TySet.t -> type_expr -> a repr -> a extractor -> (a, error) result =
+    fun ctx ambty ty r extract ->
+      let module TyTbl = Hashtbl.Make (TypeOps) in
+      let visited = TyTbl.create 17 in
+      let res: a option =
+        TySet.fold (fun ty acc ->
+            let ty = Btype.repr ty in
+            if TyTbl.mem visited ty then acc
+            else begin
+              TyTbl.add visited ty ();
+              match acc, ty with
+                Some _, _ -> acc
+              | _, { desc = Tconstr (p, [], _); _ } when is_newtype p -> acc
+              | _, { desc = Tconstr _; _} when not (is_rconstr r) ->
+                begin
+                  match extract (safe_expand_abbrev_max ctx ty, r) with
+                  | Ok res -> Some res
+                  | Error _ -> None
+                end
+              | _, ty ->
+                match extract (ty, r) with
+                  Ok res -> Some res
+                | Error _ -> None (* => ambivalence potentially illformed *)
+            end)
+          ambty None in
+      match res with
+        Some res ->  Ok res
+      | None -> Error (Expected_type_mismatch (r, ty))
 
-let rec extract_type_info :
-  type a. context -> a extractor -> a repr -> type_expr -> (a, error) result =
-  fun ctx ({ matches; extract } as ex) r ty ->
-    match Btype.repr ty with
-      ty when matches (ty, r) -> Ok (extract (ty, r))
-    | { desc = Tconstr (p, [], _); } as ty when gadt_mode ctx p ->
-      let ty_repr, ambi = find_equiv_ambi ctx ty [] in
-      extract_repr_newty ctx ambi.value ty r
-    | { desc = Tconstr _; _ } ->
-      expand_abbrev ctx ty |> extract_type_info ctx ex r
-    | p -> Error (Expected_type_mismatch (r, ty))
+  (* Si newtype : remove newtype pour éviter le cycle, on continue
+     Sinon, si constr : expanse
+     Sinon si tuple : retourne le tuple  (choisi le less_gen??)
+     Sinon on continue*)
 
-let extract_tuple_info ctx ty =
-  extract_type_info ctx {
-    extract = (function ({desc = Ttuple tys}, Rtuple) -> tys
-                      | _, _ -> assert false);
-    matches = (function ({desc = Ttuple _}, Rtuple) -> true
-                      | _, _ -> false)
-  } Rtuple ty
+  let rec extract_type_info :
+    type a. ?expand_poly:bool -> context -> a extractor -> a repr -> type_expr
+    -> (a, error) result =
+    fun ?(expand_poly=true) ctx extract r ty ->
+      let ty = match Btype.repr ty with
+          { desc = Tpoly (ty, v); _ } -> ty | ty -> Btype.repr ty in
+      match extract (ty, r), ty with
+        Ok _ as res, _ -> res
+      | Error _, { desc = Tconstr (p, [], _); } when gadt_mode ctx p ->
+        let ty_repr, ambi = find_equiv_ambi ctx ty [] in
+        extract_repr_newty ctx ambi.value ty r extract
+      | Error _, { desc = Tconstr _; _ } ->
+        expand_abbrev ctx ty |> extract_type_info ctx extract r
+      | Error _ as e, _ -> e
 
-let extract_variant_info ctx ty =
-  extract_type_info ctx {
-    extract = (function ({desc = Tvariant rd}, Rvariant) -> rd
-                      | _, _ -> assert false);
-    matches = (function ({desc = Tvariant _}, Rvariant) -> true
-                      | _, _ -> false)
-  } Rvariant ty
+  let extract : type a. a extractor =
+    function
+      ({desc = Ttuple tys}, Rtuple) -> Ok tys
+    | ({desc = Tvariant rd}, Rvariant) -> Ok rd
+    | ({desc = Tpoly (ty, params)}, Rpoly) -> Ok (params, ty)
+    | ({desc = Tarrow (l, ty, ty', _)}, Rarrow) -> Ok (l, ty, ty')
+    | ({desc = Tpackage (p, lids, tys)}, Rpackage) -> Ok (p, lids, tys)
+    | ({desc = Tobject (f, _)}, Robject) -> Ok f
+    | ty, r -> Error (Expected_type_mismatch (r, ty))
 
-let extract_poly_info ctx ty =
-  extract_type_info ctx {
-    extract = (function ({desc = Tpoly (ty, params)}, Rpoly) -> params, ty
-                      | _, _ -> assert false);
-    matches = (function ({desc = Tpoly _}, Rpoly) -> true
-                      | _, _ -> false)
-  } Rpoly ty
+  let extract_tuple_info ctx ty =
+    extract_type_info ctx extract Rtuple ty
 
-let extract_arrow_info ctx ty =
-  extract_type_info ctx {
-    extract = (function ({desc = Tarrow (l, ty, ty', _)}, Rarrow) -> l, ty, ty'
-                      | _, _ -> assert false);
-    matches = (function ({desc = Tarrow (_, _, _, _)}, Rarrow) -> true
-                      | _, _ -> false)
-  } Rarrow ty
+  let extract_variant_info ctx ty =
+    extract_type_info ctx extract  Rvariant ty
 
-let extract_package_info ctx ty =
-  extract_type_info ctx {
-    extract = (function
-          ({desc = Tpackage (p, lids, tys)}, Rpackage) -> p, lids, tys
-        | _, _ -> assert false);
-    matches = (function
-          ({desc = Tpackage (_, _, _)}, Rpackage) -> true
-        | _, _ -> false)
-  } Rpackage ty
+  let extract_poly_info ctx ty =
+    extract_type_info ~expand_poly:false ctx extract Rpoly ty
 
-let extract_object_info ctx ty =
-  extract_type_info ctx {
-    extract = (function
-          ({desc = Tobject (f, _)}, Robject) -> f
-        | _, _ -> assert false);
-    matches = (function
-          ({desc = Tobject (_, _)}, Robject) -> true
-        | _, _ -> false)
-  } Robject ty
+  let extract_arrow_info ctx ty =
+    extract_type_info ctx extract Rarrow ty
+
+  let extract_package_info ctx ty =
+    extract_type_info ctx extract Rpackage ty
+
+  let extract_object_info ctx ty =
+    extract_type_info ctx extract Robject ty
 
 
 
-let find_meth ctx loc meth priv ty =
-  (* Simple version *)
-  print_debug
-    (Format.asprintf "find_meth %s in %a"
-       meth Printtyp.raw_type_expr ty);
-  let f = match extract_object_info ctx ty with
-      Ok f -> f
-    | Error e -> failwith "Error"
-  in
-  let rec find f =
-    match (Btype.repr f).desc with
-      Tfield (s, k, ty, rem) ->
-      if meth = s then ty else find rem
-    | Tvar _ | Tnil -> assert false (* raise (Class_error (Undeclared_method s, loc)) *)
-    | _ -> assert false (* raise (Class_error (Illformed_object_type ty, loc)) *)
-  in
-  find f
-    
+  let find_meth ctx loc meth priv ty =
+    (* Simple version *)
+    print_debug
+      (Format.asprintf "find_meth %s in %a"
+         meth Printtyp.raw_type_expr ty);
+    let f = match extract_object_info ctx ty with
+        Ok f -> f
+      | Error e -> failwith "Error"
+    in
+    let rec find f =
+      match (Btype.repr f).desc with
+        Tfield (s, k, ty, rem) ->
+        if meth = s then ty else find rem
+      | Tvar _ | Tnil -> assert false (* raise (Class_error (Undeclared_method s, loc)) *)
+      | _ -> assert false (* raise (Class_error (Illformed_object_type ty, loc)) *)
+    in
+    find f
+
 end
 
 (** *)

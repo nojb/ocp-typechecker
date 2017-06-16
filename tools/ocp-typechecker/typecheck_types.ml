@@ -805,21 +805,23 @@ module Extract = struct
 *)
 
   type 'a repr =
-      Rtuple : type_expr list repr
+      Rany : type_expr repr
+    | Rtuple : 'a repr list -> 'a list repr     
     | Rconstr : (type_expr list * Path.t) repr
     | Rvariant : row_desc repr
     | Rarrow : (string * type_expr * type_expr) repr
     | Rpackage : (Path.t * Longident.t list * type_expr list) repr
     | Rpoly : (type_expr list * type_expr) repr
     | Robject : type_expr repr
-
+  
   type 'a extractor = type_expr * 'a repr -> ('a, error) result
 
   type error +=
       Expected_type_mismatch : _ repr * type_expr -> error
 
   let print_repr (type a) fmt : a repr -> unit = function
-      Rtuple -> Format.fprintf fmt "tuple type"
+      Rany -> Format.fprintf fmt "type"
+    | Rtuple _ -> Format.fprintf fmt "tuple type"
     | Rconstr -> Format.fprintf fmt "constructor type"
     | Rvariant -> Format.fprintf fmt "variant type"
     | Rarrow -> Format.fprintf fmt "functional type"
@@ -879,9 +881,9 @@ module Extract = struct
         expand_abbrev ctx ty |> extract_type_info ctx extract r
       | Error _ as e, _ -> e
 
-  let extract : type a. a extractor =
-    function
-      ({desc = Ttuple tys}, Rtuple) -> Ok tys
+  let rec extract : type a. a extractor = function
+      ty, Rany -> Ok ty
+    | ({desc = Ttuple tys}, Rtuple rl) -> extract_list (tys, rl) >>= return
     | ({desc = Tvariant rd}, Rvariant) -> Ok rd
     | ({desc = Tpoly (ty, params)}, Rpoly) -> Ok (params, ty)
     | ({desc = Tarrow (l, ty, ty', _)}, Rarrow) -> Ok (l, ty, ty')
@@ -889,8 +891,24 @@ module Extract = struct
     | ({desc = Tobject (f, _)}, Robject) -> Ok f
     | ty, r -> Error (Expected_type_mismatch (r, ty))
 
-  let extract_tuple_info ctx ty =
-    extract_type_info ctx extract Rtuple ty
+  and extract_list : type a. type_expr list * a repr list -> (a list, error) result =
+    function
+      [], [] -> Ok []
+    | ty :: l, r :: rl ->
+      begin
+        match extract (ty, r) with
+          Ok ty' -> extract_list (l, rl) >>= fun l' -> Ok (ty' :: l')
+        | Error e -> Error e
+      end
+    | _, _ -> failwith "Error"
+
+  let any_repr_list arity =
+    let rec mk ar acc =
+      if ar <= 0 then acc else mk (ar-1) (Rany :: acc) in
+    mk arity []
+  
+  let extract_tuple_info ctx ty arity =
+    extract_type_info ctx extract (Rtuple (any_repr_list arity)) ty
 
   let extract_variant_info ctx ty =
     extract_type_info ctx extract  Rvariant ty

@@ -252,7 +252,7 @@ and type_pattern_desc ctx binded loc p tyexp =
     *)
     print_debug (Format.asprintf "Type of Tpat_tuple:\n  %a"
       Printtyp.raw_type_expr tyexp);
-    let tys = match Extract.extract_tuple_info ctx tyexp with
+    let tys = match Extract.extract_tuple_info ctx tyexp (List.length pats) with
         Ok tys -> tys
       | Error e -> raise Typecheck_typing.(Typing_error (Types_error e, loc))
     in
@@ -828,7 +828,7 @@ and type_expr_desc ctx loc desc tyexp =
     (* \/e in exprs, env |- ei : tyi
        tuple : ty0 * .. * tyn *)
     let tys_exp =
-      match Extract.extract_tuple_info ctx tyexp with
+      match Extract.extract_tuple_info ctx tyexp (List.length exprs) with
         Ok tys -> tys
       | Error e -> raise Typecheck_typing.(Typing_error (Types_error e, loc))
     in

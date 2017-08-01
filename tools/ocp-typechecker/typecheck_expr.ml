@@ -583,7 +583,7 @@ let type_class_arg_pattern cl_num cl_env lab p =
 
 
 let rec type_expr_aux ctx expr ty_exp =
-  let dbmode = debug_mode expr.exp_attributes in
+  let dbmode = debug_mode ~expr expr.exp_attributes in
   print_debug (Format.asprintf"type_expr: %a\n\
                                        expected ty: %a"
                          Typecheck_pretty.expression expr

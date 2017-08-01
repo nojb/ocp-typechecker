@@ -13,6 +13,7 @@
 open Typecheck.IO
 open Typecheck.Flags
 open Typecheck_result
+open Typecheck_report
 
 let if_set flag fmt f v =
   if !flag then f fmt v; Ok v
@@ -67,6 +68,9 @@ let print_annotated_typedtree fmt (ast, modulename) =
   Format.fprintf fmt "module %s = %a\n\n%!" modulename
     Typecheck.Pretty.structure ast
 
+let print_annotated_expression fmt _ =
+  print_annotated_expression fmt
+
 let print_filename_header fmt file result =
   Format.fprintf fmt "(* %s *)\n%!" file; Ok result
 
@@ -90,6 +94,7 @@ let type_typedtree fmt file =
   >>= if_set print_dtypedtree fmt print_typedtree
   >>= if_set print_annotated fmt print_annotated_typedtree
   >>= typecheck_typedtree fmt
+  >>= if_set print_annotations fmt print_annotated_expression
 
 let type_typedtree' fmt file =
   type_typedtree fmt file

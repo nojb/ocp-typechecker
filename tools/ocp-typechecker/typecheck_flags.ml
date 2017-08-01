@@ -17,9 +17,12 @@ let print_dtypedtree = ref false
 let typecheck = ref true
 let output : string option ref = ref None
 let warn_mode = ref false
+let print_annotations = ref false
 
 let files : string list ref = ref []
 let push_file f = files := f :: !files
+
+let exprs : Typedtree.expression list ref = ref []
 
 let debug = ref false
 let backtrace = ref false
@@ -33,7 +36,7 @@ let print_warning loc msg =
     Format.eprintf "%aWarning: %s\n%!"
       Location.print loc msg
 
-let mode attr f =
+let mode ?expr attr f =
   match attr with
   | "debug" ->
     let prev_debug = !debug in
@@ -47,12 +50,18 @@ let mode attr f =
     let prev_warn = !warn_mode in
     debug := true;
     fun () -> f (); warn_mode := prev_warn
-  | "no-warning" ->
+  | "no_warning" ->
     let prev_warn = !warn_mode in
     warn_mode := false;
     fun () -> f (); warn_mode := prev_warn
+  | "debug_annot" ->
+    begin
+      match expr with
+        Some expr -> exprs := expr :: !exprs
+      | None -> ()
+    end; f
   | _ -> f
 
-let debug_mode l =
+let debug_mode ?expr l =
   List.fold_left (fun acc (s, _) ->
-      mode s.Location.txt acc) (fun _ -> ()) l
+      mode ?expr s.Location.txt acc) (fun _ -> ()) l

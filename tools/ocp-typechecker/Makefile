@@ -1,6 +1,6 @@
 all:
 	# ocp-build typecheck-namespace
-	ocp-build typecheck
+	ocp-build 
 
 tests:
 	sh make-tests.sh

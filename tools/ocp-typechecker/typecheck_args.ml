@@ -165,21 +165,32 @@ end)
 
 let spec = [
   "-dtypedtree", Arg.Set print_dtypedtree, "Prints typedtree";
+
   "-dannot", Arg.Set print_annotated, "Prints \"annotated\" program";
+
   "-dannot-full", Arg.Unit (fun () -> print_annotated := true;
                              Typecheck_pretty.full := true),
   "Prints the annotedted program with all information";
+
+  "-report-annots", Arg.Set print_annotations,
+  "Prints flagged expressions with their annotations";
+
   "-debug", Arg.Set debug, "Debug flag";
+
   "-o", Arg.String (fun s -> output := Some s), "Prints the result into the
   given file.";
+
   "-no-typecheck", Arg.Clear typecheck, "Does not typecheck";
+
   "-I", Arg.String (fun dir ->
       Clflags.include_dirs := dir :: !Clflags.include_dirs),
   "Adds searchable paths";
+
   "-bt", Arg.Unit (fun () ->
       Printexc.record_backtrace true;
       backtrace := true),
   "Prints the backtrace in case of error";
+
   "-warnmode", Arg.Set warn_mode, "Warning mode";
 
 ] @ OCaml_options.list

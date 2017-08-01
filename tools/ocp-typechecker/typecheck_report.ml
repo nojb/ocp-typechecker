@@ -59,3 +59,26 @@ let write_report ?outdir filename exns =
     Typecheck_result.Ok () -> ()
   | Typecheck_result.Error exn ->
     raise exn
+
+(** Reports flagged expressions with their annotations *)
+
+let print_annotated_expression fmt =
+  let open Typedtree in
+  ignore @@
+  List.fold_left (fun fmt expr ->
+      Format.fprintf fmt
+        "-------------------------------------------\
+         Expression:\n\
+         @[%a@]\n\
+         Type:\n\
+         @[%a@]\n\
+         Extras:\n\
+        [%a]\n\n%!
+        "
+        Typecheck_pretty.expression_desc expr.exp_desc
+        Printtyp.raw_type_expr expr.exp_type
+        Typecheck_pretty.extras' expr.exp_extra;
+      fmt
+    )
+    fmt (List.rev !Typecheck_flags.exprs);
+  Format.fprintf fmt "-------------------------------------------\n%!"

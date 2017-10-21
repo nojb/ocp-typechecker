@@ -67,13 +67,13 @@ let print_annotated_expression fmt =
   ignore @@
   List.fold_left (fun fmt expr ->
       Format.fprintf fmt
-        "-------------------------------------------\
+        "\n-------------------------------------------\n\
          Expression:\n\
          @[%a@]\n\
          Type:\n\
          @[%a@]\n\
          Extras:\n\
-        [%a]\n\n%!
+        [%a]\n%!
         "
         Typecheck_pretty.expression_desc expr.exp_desc
         Printtyp.raw_type_expr expr.exp_type
@@ -81,4 +81,5 @@ let print_annotated_expression fmt =
       fmt
     )
     fmt (List.rev !Typecheck_flags.exprs);
-  Format.fprintf fmt "-------------------------------------------\n%!"
+  if !Typecheck_flags.exprs <> [] then
+    Format.fprintf fmt "-------------------------------------------\n%!"

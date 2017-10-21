@@ -26,6 +26,7 @@ let exprs : Typedtree.expression list ref = ref []
 
 let debug = ref false
 let backtrace = ref false
+let raw_print = ref false
 
 let print_debug s =
   if !debug then
@@ -35,6 +36,10 @@ let print_warning loc msg =
   if !warn_mode then
     Format.eprintf "%aWarning: %s\n%!"
       Location.print loc msg
+
+let print_type fmt ty=
+  if !raw_print then Printtyp.raw_type_expr fmt ty
+  else Printtyp.type_expr fmt ty
 
 let mode ?expr attr f =
   match attr with
@@ -48,7 +53,7 @@ let mode ?expr attr f =
     fun () -> f (); debug := prev_debug
   | "warning" ->
     let prev_warn = !warn_mode in
-    debug := true;
+    warn_mode := true;
     fun () -> f (); warn_mode := prev_warn
   | "no_warning" ->
     let prev_warn = !warn_mode in

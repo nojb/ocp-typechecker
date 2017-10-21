@@ -175,6 +175,9 @@ let spec = [
   "-report-annots", Arg.Set print_annotations,
   "Prints flagged expressions with their annotations";
 
+  "-raw-types", Arg.Set raw_print,
+  "In error messages, types are printed as their internal representation.";
+  
   "-debug", Arg.Set debug, "Debug flag";
 
   "-o", Arg.String (fun s -> output := Some s), "Prints the result into the

@@ -102,6 +102,18 @@ let eq_newtype (ctx : context) p tv =
     Ok { ctx with names = TyMap.add tv (Newtype p) ctx.names }
   | _ -> Error (Error_msg "eq_newtype")
 
+
+let rec unfold_row_field = function
+    Reither (_, _, _, {contents = Some r}) -> unfold_row_field r
+  | r -> r
+
+let filter_absents rf =
+  List.fold_left (fun acc (l, f) ->
+      match unfold_row_field f with
+        Rabsent -> acc
+      | f' -> (l, f') :: acc) [] rf
+  |> List.rev 
+
 let rec eq_row_fields ctx (l1, f1) (l2, f2) =
   if l1 <> l2 then
     Error (Variant_tag_mismatch (l1, f1, f2))
@@ -121,9 +133,12 @@ let rec eq_row_fields ctx (l1, f1) (l2, f2) =
       Error (Variant_tag_mismatch (l1, f1, f2))
 
 (* Assume rows are sorted? *)
+
 and eq_row ctx r1 r2 =
   let r1 = Btype.row_repr r1 and r2 = Btype.row_repr r2 in
-  if List.length r1.row_fields = List.length r2.row_fields then
+  let rf1 = filter_absents r1.row_fields
+  and rf2 = filter_absents r2.row_fields in
+  if List.length rf1 = List.length rf2 then
     (let res = List.fold_left2 (fun prev r1 r2 ->
          prev >>= fun ctx -> eq_row_fields ctx r1 r2)
          (Ok ctx)
@@ -271,7 +286,8 @@ and eq ctx ty1 ty2 : (context, error) result =
       let ctx = allocate_univars ctx vars1 vars2 in
       eq ctx ty1 ty2
     | Tnil, Tnil -> Ok ctx
-    | Tvariant r1, Tvariant r2 -> eq_row ctx r1 r2
+    | Tvariant r1, Tvariant r2 ->
+      eq_row ctx (Btype.row_repr r1) (Btype.row_repr r2)
     | Tpackage (p1, lids1, tys1), Tpackage (p2, lids2, tys2) ->
       eq_packages ctx (p1, lids1, tys1) (p2, lids2, tys2)
     | Tobject (f1, _), Tobject (f2, _) ->
@@ -695,17 +711,19 @@ and instance_row ctx r1 r2 subst =
   else instance_row_desc ctx r1 r2 r2.row_closed subst
 
 and instance_row_desc ctx d1 d2 closed subst =
+  let rd1 = filter_absents d1.row_fields
+  and rd2 = filter_absents d2.row_fields in
   List.fold_left (fun subst (l1, f1) ->
       match subst with
         Error _ -> subst
       | Ok (subst, ctx) ->
         try
-          let rf = List.assoc l1 d2.row_fields in
+          let rf = List.assoc l1 rd2 in
           instance_row_field ctx l1 f1 rf subst
         with Not_found ->
           if closed then Error (Incompatible_rows (d1, d2))
           else Ok (subst, ctx))
-    (Ok (subst, ctx)) d1.row_fields
+    (Ok (subst, ctx)) rd1
 
 and instance_row_field ctx l f1 f2 subst =
   match f1, f2 with
@@ -724,6 +742,8 @@ and instance_row_field ctx l f1 f2 subst =
       | _, _ -> Error (Tag_type_mismatch l)
     end
   | Rabsent, Rabsent -> Ok (subst, ctx)
+  | Reither (_, _, _,  {contents = Some f1}), f2 ->
+    instance_row_field ctx l f1 f2 subst
   | _, _ -> Error (Tag_type_mismatch l)
 
 and instance_opt ctx l topt1 topt2 subst =
@@ -818,7 +838,7 @@ and instance ctx t1 t2 subst : ('a, error) result =
     instance ctx t1' poly' subst
   | Tnil, Tnil -> Ok (subst, ctx)
   | Tvariant r1, Tvariant r2 ->
-    instance_row ctx r1 r2 subst
+    instance_row ctx (Btype.row_repr r1) (Btype.row_repr r2) subst
   | Tunivar _, Tunivar _ ->
     (try
        if equiv_univars ctx t1' t2' then Ok (subst, ctx) else
@@ -1150,7 +1170,7 @@ and apply_subst t subst =
     if tys != tys' then Ctype.newconstr p tys'
     else t
   | Tvariant r ->
-    let r' = apply_row r subst in
+    let r' = apply_row (Btype. row_repr r) subst in
     if r == r' then t
     else Ctype.newty (Tvariant r')
   | Tunivar _ -> t
@@ -1290,7 +1310,7 @@ let rec wellformed_type ~poly ctx ty visited =
     (* | Tobject of type_expr * (Path.t * type_expr list) option ref *)
     (* | Tfield of string * field_kind * type_expr * type_expr *)
     | Tvariant row ->
-      wellformed_row ~poly ctx row visited
+      wellformed_row ~poly ctx (Btype.row_repr row) visited
     | Tpackage (p, ls, tys) ->
       begin
         try
@@ -1445,7 +1465,8 @@ let rec generalizable ctx ty vars =
     List.fold_left (fun vars ty -> generalizable ctx ty vars) vars tys
   | Tobject (ty, _) | Tlink ty | Tsubst ty | Tpoly (ty, _) ->
     generalizable ctx ty vars
-  | Tvariant { row_fields } ->
+  | Tvariant rd ->
+    let { row_fields } = Btype.row_repr rd in
     List.fold_left (fun vars (l, rf) ->
         match rf with
           Rpresent (Some ty) -> generalizable ctx ty vars
@@ -1487,7 +1508,8 @@ let rec generalizable_nonvalue ctx ty pos vars =
   | Tpackage (_, _, tys) ->
     List.fold_left (fun vars ty ->
         generalizable_nonvalue ctx ty Contravariant vars) vars tys
-  | Tvariant { row_fields } ->
+  | Tvariant rd ->
+    let { row_fields } = Btype.row_repr rd in
     List.fold_left (fun vars (l, rf) ->
         match rf with
           Rpresent (Some ty) -> generalizable_nonvalue ctx ty pos vars
@@ -1551,11 +1573,11 @@ let gadt_split_existentials ctx ty_args ty_res =
 let print_error_desc fmt = function
     Incompatible_types (t1, t2) ->
     Format.fprintf fmt "Types are incompatible: %a and %a."
-      Printtyp.type_expr t1 Printtyp.type_expr t2
+      print_type t1 print_type t2
   | Incompatible_rows (r1, r2) ->
     Format.fprintf fmt "Both rows are incompatible:\n%a\nand\n%a."
-      Printtyp.type_expr (newgenty @@ Tvariant r1)
-      Printtyp.type_expr (newgenty @@ Tvariant r2)
+      print_type (newgenty @@ Tvariant r1)
+      print_type (newgenty @@ Tvariant r2)
   | Label_mismatch (l1, l2) ->
     Format.fprintf fmt
       "Label %s and %s mismatches" l1 l2
@@ -1567,14 +1589,14 @@ let print_error_desc fmt = function
     Format.fprintf fmt
       "The type variable %a was previously instantiated with the type:\n%a\n\
        It is not compatible with:\n%a."
-      Printtyp.type_expr v
-      Printtyp.type_expr ty
-      Printtyp.type_expr ty'
+      print_type v
+      print_type ty
+      print_type ty'
   | Incoherent_polymorphic_instantiation (ty, ty') ->
     Format.fprintf fmt
       "The universal variable %a cannot be made equivalent with %a.\n\
        The polymorphic type is not an instance valid."
-      Printtyp.type_expr ty Printtyp.type_expr ty'
+      print_type ty print_type ty'
   | Incompatible_modtypes_decl (mty1, mty2) ->
     Format.fprintf fmt
       "The module type:\n%a\ncannot be coerced into\n%a."
@@ -1604,14 +1626,14 @@ let print_error_desc fmt = function
       Printtyp.path p
   | Illformed_type_application ty ->
     Format.fprintf fmt
-      "This type application is illformed: %a." Printtyp.type_expr ty
+      "This type application is illformed: %a." print_type ty
   | Unbound_universal_variable ty ->
     Format.fprintf fmt
       "The universal type variable %a has not been quantified."
-    Printtyp.type_expr ty
+    print_type ty
   | Illformed_package_type ty ->
     Format.fprintf fmt "The package type %a is illformed."
-      Printtyp.type_expr ty
+      print_type ty
   | Variant_inherits_abstract p ->
     Format.fprintf fmt "This variant type inherits from the tyep constructor \
                         %a,\n which is abstract."
@@ -1619,7 +1641,7 @@ let print_error_desc fmt = function
   | Variant_inconsistent_inheritance ty ->
     Format.fprintf fmt "This variant type inherits from type %a. It must inherit \
                         from a variant."
-      Printtyp.type_expr ty
+      print_type ty
   | Variant_inherited_not_static ->
     Format.fprintf fmt "The variant inherit is not static."
   | Variant_tag_mismatch (s, r1, r2) ->
@@ -1643,7 +1665,7 @@ let print_error_desc fmt = function
     Format.fprintf fmt
       "This object contains a type %a, but it must contain either a method or a \
        row variable."
-      Printtyp.type_expr ty
+      print_type ty
   | Unbound_field f ->
     Format.fprintf fmt
       "The field %s is missing." f
@@ -1653,13 +1675,13 @@ let print_error_desc fmt = function
       Printtyp.class_type cty1 Printtyp.class_type cty2
   | Can_generalize ty ->
     Format.fprintf fmt "The type variable %a should have been generalized."
-      Printtyp.type_expr ty
+      print_type ty
   | Cannot_generalize (ty, var) ->
     Format.fprintf fmt
       "This expression has type %a.\n\
        The type variable %a cannot be generalized."
-      Printtyp.type_expr ty
-      Printtyp.type_expr var
+      print_type ty
+      print_type var
   | Types_error e -> Typecheck_types.print_error fmt e
   | Error_msg s ->
     Format.fprintf fmt "%s" s

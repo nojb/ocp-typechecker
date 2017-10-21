@@ -1100,7 +1100,6 @@ let empty_class_context =
     local_meths = Concr.empty;
   }
 
-
 let print_error fmt = function
   | Extract.Expected_type_mismatch (repr, ty) ->
     Format.fprintf fmt

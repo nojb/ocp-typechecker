@@ -17,7 +17,6 @@
 
 open Typecheck_ctype
 open Asttypes
-open Types
 
 (* Typing of constants *)
 

@@ -77,9 +77,9 @@ module PArray = struct
       | Diff _ -> assert false
       end
 
-  let rec get t i = match !t with
+  let get t i = match !t with
     | Arr a -> Array.get a i
-    | Diff (j, v, t') ->
+    | Diff (_j, _v, t') ->
       reroot t';
         begin match !t' with
         | Arr a -> Array.get a i

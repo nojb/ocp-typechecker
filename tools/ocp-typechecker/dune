@@ -1,0 +1,27 @@
+(library
+ (name typecheck)
+ (wrapped false)
+ (libraries compiler-libs.common)
+ (modules typecheck_result
+          typecheck_iO
+          typecheck_uf
+          typecheck_flags
+          typecheck_pretty
+          typecheck_ctype
+          typecheck_utils
+          typecheck_types
+          typecheck_typing
+          typecheck_typecore2
+          typecheck_typexpr
+          typecheck_typedecl
+          typecheck_expr
+          typecheck_class
+          typecheck_typemod
+          typecheck_report
+          typecheck_args
+          typecheck))
+
+(executable
+ (name typecheck_main)
+ (libraries typecheck)
+ (modules typecheck_main))

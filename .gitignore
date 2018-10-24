@@ -16,3 +16,7 @@ _olint
 
 # backups of modified files
 *~
+
+_build
+*.install
+.merlin

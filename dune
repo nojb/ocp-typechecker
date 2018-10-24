@@ -1,0 +1,3 @@
+(alias
+ (name default)
+ (deps tools/ocp-typechecker/typecheck_main.exe))

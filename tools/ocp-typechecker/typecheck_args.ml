@@ -91,15 +91,11 @@ module OCaml_options = Main_args.Make_bytecomp_options (struct
   let _compat_32 = set bytecode_compatible_32
   let _config = show_config
   let _custom = set custom_runtime
-#if OCAML_VERSION >= "4.02.3"
- let _no_check_prims = set no_check_prims
+  let _no_check_prims = set no_check_prims
   let _keep_locs = set keep_locs
   let _keep_docs = set keep_docs
   let _output_complete_obj () =
     output_c_object := true; output_complete_object := true; custom_runtime := true
-#elif OCAML_VERSION >= "4.02"
-  let _keep_locs _ = ()
-#endif
   let _dllib s = dllibs := Misc.rev_split_words s @ !dllibs
   let _dllpath s = dllpaths := !dllpaths @ [s]
   let _for_pack s = for_package := Some s
@@ -177,7 +173,7 @@ let spec = [
 
   "-raw-types", Arg.Set raw_print,
   "In error messages, types are printed as their internal representation.";
-  
+
   "-debug", Arg.Set debug, "Debug flag";
 
   "-o", Arg.String (fun s -> output := Some s), "Prints the result into the
